@@ -1,0 +1,71 @@
+---
+title: "Public Transport Acces Analysis"
+output: html_document
+date: "2024-06-02"
+---
+
+The analysis, as the preprocessing, is separated into two parts; first the distance possible to travel with any means of public transportation from a maximum of 500 meters of a given institution, within the three thresholds: 5, 20 and 45 minutes are extracted for all education locations. Second, these estimates are grouped by trip intervals and service ids, and the mean wait for a given mode of transportation is 
+
+**the trip intervals etc should come before time extraction!!! to be able to add it to the trip before calculating the time and dist!!**
+
+time limit?? 05:00-23:59
+
+
+
+# Load Data and Packages
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+pacman::p_load("tidyverse", 
+               "readxl", 
+               "stringr", 
+               "raster", 
+               "sf", 
+               "mapview", 
+               "plyr", 
+               "geodata", 
+               "lwgeom")
+
+```
+
+### STATUS col in wait_times
+```{r}
+EDU_stops <- st_join(stops_sf[stops_sf$intersect==1,], EDU_BUF)
+
+stop_times_wait <- merge(EDU_stops, stop_times_wait, by = "stop_id")
+
+EDU_stops <- merge(EDU_stops, wait_times, by = "stop_id")
+```
+
+```{r}
+stop_times_wait$STATUS <- as.factor(stop_times_wait$STATUS)
+
+tapply(stop_times_wait$wait, stop_times_wait$STATUS, summary) 
+
+```
+
+### aggregate 
+
+```{r}
+wait_times <- stop_times %>% 
+  #dplyr::group_by(stop_id, service_id) %>% 
+  dplyr::summarise(mean_wait = mean(wait), sd_wait = sd(wait), .by = c(stop_id, service_id))
+write_csv(wait_times, "../in/preprocessed/wait_times.csv")
+write_csv(stop_times, "../in/preprocessed/stop_times_wait.csv")
+rm(list=ls())
+```
+
+
+# Data 
+
+
+
+## stops_routes
+```{r}
+stops_routes <- read_csv("../in/preprocessed/stops_routes.csv")
+stop_times_wait <- read_csv("../in/preprocessed/stop_times_wait.csv")
+wait_times <- read_csv("../in/preprocessed/wait_times.csv")
+load("../in/preprocessed/calendar_matrix.RData")
+```

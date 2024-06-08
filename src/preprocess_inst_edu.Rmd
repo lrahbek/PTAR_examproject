@@ -1,0 +1,196 @@
+---
+title: "Pre-Processing Institution and Study Programme Data"
+author: "Laura Givskov Rahbek"
+output: html_document
+date: "2024-05-30"
+---
+
+Data aquisition and the pre-processing is described in detail in the README.md file, and the main points are included in the exam write up. 
+
+
+# Set up and Package Installation 
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+pacman::p_load("tidyverse", "sf")
+```
+
+
+# Institutionsregisteret (InReg)
+The data from the institution register is cleaned and pre-processed. 
+```{r}
+InReg <- read.csv("../in/Instreg_All_28-04-2024.csv", ##load in data
+                  stringsAsFactors = FALSE,
+                  header = TRUE, 
+                  fileEncoding = "latin1")
+InReg <- InReg %>% 
+  dplyr::select("HOVEDSKOLE_INST", "INST_NR", "INST_NAVN", "inst_type_3_tekst", 
+         "AKTIV_KODE", "BEL_KOMMUNE_TEKST", "ENHEDSART_TEKST", "GEO_BREDDE_GRAD", 
+         "GEO_LAENGDE_GRAD") %>% #select relevant columns 
+  filter(!AKTIV_KODE%in% c(3,5)) %>% #remove inactive programmes
+  filter(!BEL_KOMMUNE_TEKST == "Uden for kommunal inddeling (Færøerne og Grønland)") %>% #remove programmes in Greenland and the Faroe islands 
+  filter(!grepl("(e-læring)", INST_NAVN)) %>% #remove e-learning instituions
+  filter(inst_type_3_tekst %in% c("Maritime uddannelsesinstitutioner", 
+                                  "Kunstneriske og kulturelle uddannelsesinstitutioner",
+                                  "Universiteter",
+                                  "Professionshøjskoler",
+                                  "Erhvervsakademier")) %>% #keep only the programmes in the categories from the FBUM plan. 
+  dplyr::select(!c("AKTIV_KODE")) #remove active column 
+colnames(InReg) <- c("H_INST_NR", "INST_NR", "INST_NAME",  "INST_TYPE", "MUN_NAME", "UNIT_TYPE","LAT", "LONG")  
+```
+
+## Main Institution Name (*H_INST_NAME*)
+The data frame is structured in a way where the main institutions does not have a main institution number (as it is the same as the local institution number), this is remedied in the following way: 
+```{r}
+#subset units, and main schools, and schools with no units to create column with main school name
+InReg_H <- InReg[InReg$UNIT_TYPE == "Hovedskole (institution med enheder)", ]
+InReg_U <- InReg[InReg$UNIT_TYPE == "Institution uden enheder", ]
+InReg_I <- InReg[InReg$UNIT_TYPE == "Afdeling (underordnet enhed)", ]
+#correct H_INST_NR and H_INST_NAME in InReg_U and names in InReg_I 
+InReg_U$H_INST_NR <- InReg_U$INST_NR
+InReg_U$H_INST_NAME <- InReg_U$INST_NAME
+#correct H_INST_NR and name in InReg and merge InReg_H to InReg_U to avoid having double rows because of main schools
+InReg_H$H_INST_NR <- InReg_H$INST_NR
+InReg_H$H_INST_NAME <- InReg_H$INST_NAME
+InReg <- merge(InReg_I, InReg_H[c("H_INST_NR", "H_INST_NAME")], all.x = T, by = c("H_INST_NR"))
+InReg <- rbind(InReg, InReg_U)
+InReg <- rbind(InReg, InReg_H)
+```
+
+## sf object of InReg
+The cleaned and pre-processed InReg data frame is converted to an sf object with crs = 4258, and transformed to planar coordinates with crs = 25832. The sf object is then saved and the workspace cleaned. 
+```{r}
+InReg_sf <- InReg %>% 
+  st_as_sf(coords = c("LONG", "LAT"), crs = 4258) %>% 
+  st_transform(crs = 25832) 
+st_write(InReg_sf, "../in/preprocessed/institutions/InReg.shp", append = F)
+rm(list=ls())
+```
+
+
+# New Study Programmes
+The .csv file loaded in contains information on the new study programmes, and is available in ```in/new_ed/new_study.csv```. How the programmes are defined and where the information was extracted from is described in detail in the README.md file in ```in/new_ed/README.md```. 
+```{r}
+NeEdu <- read.csv("../in/new_ed/new_study.csv", sep = ";") #load in csv file
+InReg_sf <- st_read("../in/preprocessed/institutions/InReg.shp") #load in InReg_sf
+
+NeEdu <- merge(InReg_sf, #merge NeEdu with InReg to retrieve exisiting programme locations 
+               NeEdu , 
+               by.y = c("H_INST_NAME", "MUN_NAME"), 
+               by.x = c("H_INST_NA", "MUN_NAM"), 
+               all.y = T) 
+#several of the study programmes matched with more than one instituion in InReg, the following cleaning and filling out of missing information is described in detail in the new_ed/README.md file
+
+NeEdu <- NeEdu %>% 
+  dplyr::select("NAME", "H_INST_NR", "INST_NR", "INST_NA", "H_INST_NA", 
+                "MUN_NAM","UDD_AREA", "INST_TY", "UNIT_TY", "geometry") %>% 
+  filter(!grepl("UC SYD Efter- og Videreuddannelsen",INST_NA)) %>% #ergoterapeut
+  filter(!grepl("Københavns Professionshøjskole - Campus Nordsjælland, Hillerød",INST_NA)) %>% #teacher
+  filter(!grepl("Københavns Professionshøjskole, Nødebo",INST_NA)) %>%
+  filter(!grepl("MARTEC Skagen",INST_NA)) %>% #skibsteknik
+  filter(!grepl("Hovedskole",UNIT_TY)) #jordmoder
+  
+# Corrections for produktionsteknolog: 
+NeEdu[NeEdu$NAME == "Produktionsteknolog", 
+      c(2,4,8,9)] <- c(657418, 
+                      "Erhvervsakademi MidtVest, Skjern", 
+                      "Erhvervsakademier",
+                      "Afdeling (underordnet enhed)")
+NeEdu$geometry[NeEdu$NAME == "Produktionsteknolog"] <- st_point(c(8.5165514, 55.9426534)) %>% 
+  st_sfc(crs= 4326) %>% 
+  st_transform(crs = 25832)
+
+# Corrections for socialrådgiver in Hjørring
+NeEdu[NeEdu$NAME == "Socialrådgiver" & NeEdu$MUN_NAM == "Hjørring Kommune", 
+      c(2,4,8:10)] <- c(851446, 
+                        "Aalborg Universitet, Hjørring", 
+                        "Universiteter", 
+                        "Afdeling (underordnet enhed)",
+                        as.vector(InReg_sf[InReg_sf$INST_NR == 821405, "geometry"]))
+```
+
+
+# UdannelsesZoom
+The data from UdannelsesZoom is cleaned and preprocessed, as with the previous datasets, it described in detail in the README.rmd markdown. 
+```{r}
+UZ <- read.csv("../in/UFM_samlet_23MAR2024.csv", fileEncoding = "latin1") #load in UZ data
+UZ <- UZ %>% 
+  dplyr::select("udbud_id", "url", "Titel", "Educational_Category", "displaydocclass",
+         "hovedinst", "hovedinsttx", "instkommunetx") %>%  #select relevant columns
+  filter(hovedinst != 999999) %>%  #remove the overall row for each study programme 
+  filter(instkommunetx != "Uoplyst/ukendt") %>%  #remove instituions outside the municipalities
+  mutate(UDD_AREA =  str_split_i(url, "/", -2)) %>% #extract subject area from the URL to UG.dk
+  dplyr::select(!"url")
+colnames(UZ) <- c("INST_NR", "NAME","ED_CAT1", "ED_CAT2", "H_INST_NR", "H_INST_NA", "MUN_NAM", "UDD_AREA") #set column names 
+UZ$H_INST_NR <- as.numeric(UZ$H_INST_NR) #convert to numeric
+
+#corrrect municipality names to fit with InReg
+UZ$MUN_NAM <- ifelse(UZ$MUN_NAM == "København", "Københavns Kommune", 
+                     ifelse(UZ$MUN_NAM == "Bornholm", "Bornholms Regionskommune",
+                            str_c(UZ$MUN_NAM, " Kommune")))
+```
+
+## Extraction of Study Programmes also Present in NeEdu and Merge with InReg
+All study programmes except for, four will be matched on name. The four remaining will be matched on study area and a manual inspection, further described in the README file. 
+```{r}
+#extract and define the values the UZ data should be matched on from NeEdu
+NeNames <- unique(NeEdu$NAME)[-c(4,18:20)] #unique study programme names in NeEdu (except the four)
+NeArea <- c(unique(NeEdu$NAME)[18:20], "Procesteknolog", "Automationsteknolog", "Jordbrugsteknolog") #per the discussion in the README.rmd, the three APs in Guldborgsund are collapsed and defined as the same category as processteknolog, jordbrugsteknolog and automatationteknolog. 
+#extract the UZ rows that match the NeEdu data and all inst. with 'music' in the name 
+UZ <- UZ %>% 
+  filter(NAME %in% c(NeNames, NeArea) | grepl("Musik", UZ$H_INST_NA)|grepl("Musik", UZ$NAME)) %>% 
+  filter(!ED_CAT2 == "Kandidatuddannelse") #  #all new programmes are 'starter' programmes, the master programmed are removed
+#The social worker in Esbjerg's INST_NR indicates an e-learning instituion, which is corrected.
+UZ$INST_NR[UZ$INST_NR == 281735] <- 561406
+#merge with InReg
+UZ_sf <- merge(InReg_sf,UZ, by = c("H_INST_NR", 
+                                   "INST_NR", 
+                                   "H_INST_NA", 
+                                   "MUN_NAM"), all.y = T)
+#some programmes are not available anymore; social worker in Guldborgsund and automatationteknolog in Hedensted.  
+UZ_sf <- UZ_sf %>% 
+  filter(!(NAME %in% c("Socialrådgiver", "Automationsteknolog") & MUN_NAM %in% c("Hedensted Kommune", "Guldborgsund Kommune"))) 
+```
+
+
+# Merge UZ_sf and NeEdu
+The to-be or newly established programmes are assigned 'new' and the existing programmes are assigned 'old'. Then the relevant columns are merged, and duplicates removed. When merged, codes are assigned to each programme to group new programmes with ones they share similarities with. Arguments are found in the README file. 
+```{r}
+UZ_sf$STATUS <- "Old"
+NeEdu$STATUS <- "New"
+EDU <- rbind(NeEdu[c(1,11,4,5,10)], 
+             UZ_sf[c(8,13,5,3,12)])
+EDU <- EDU[!duplicated(EDU[c(1,3:5)]),]#remove duplicates (the old versions)
+
+## assign codes
+EDU$CODE <- NA
+EDU$CODE[EDU$NAME == "Socialrådgiver"] <- "SOC"
+EDU$CODE[EDU$NAME == "Veterinærmedicin"] <- "VET"
+EDU$CODE[EDU$NAME == "Arkitekt"] <- "ARC"
+EDU$CODE[EDU$NAME %in% c("Maskinmester", "Skibsteknik og marin konstruktion")] <- "MAR"
+EDU$CODE[EDU$NAME == "Produktionsteknolog"] <- "PRO"
+EDU$CODE[EDU$NAME == "Medicin"] <- "MED"
+EDU$CODE[EDU$NAME == "Pædagog"] <- "PED"
+EDU$CODE[EDU$NAME == "Lærer i folkeskolen"] <- "EDU"
+EDU$CODE[EDU$NAME == "Radiograf"] <- "RAD"
+EDU$CODE[EDU$NAME == "Jordemoder"] <- "MID"
+EDU$CODE[EDU$NAME == "Ergoterapeut"] <- "OCC"
+EDU$CODE[EDU$NAME == "Jura"] <- "LAW"
+EDU$CODE[EDU$NAME == "Bioanalytiker"] <- "BIO"
+EDU$CODE[EDU$NAME == "Diplomingeniør - maskinteknik"] <- "MEC"
+EDU$CODE[EDU$NAME == "Dance and Choreography"] <- "DAN"
+EDU$CODE[EDU$NAME == "Bio- og laboratorietekniske område"] <- "GUL"
+EDU$CODE[EDU$NAME == "It-faglige område"] <- "GUL"
+EDU$CODE[EDU$NAME == "Tekniske område"] <- "GUL"
+EDU$CODE[EDU$NAME == "Automationsteknolog"] <- "GUL"
+EDU$CODE[EDU$NAME == "Jordbrugsteknolog"] <- "GUL"
+EDU$CODE[EDU$NAME == "Procesteknolog"] <- "GUL"
+
+EDU$CODE[grepl("Musik", EDU$NAME)|grepl("Musik", EDU$H_INST_NA)] <- "MUS"
+
+##save EDU sf object
+st_write(EDU, "../in/preprocessed/education/EDU.shp", append = F)
+rm(list=ls())
+```
