@@ -20,8 +20,7 @@ This repository contains the code for the preprocessing and analysis of data for
 
 - ```GTFS```, a folder where the GTFS data from Rejseplanen should be placed. 
 
-```out``` contains the outputs from the analysis 
-
+```out``` contains the outputs from the analysis; including summary statics and plots, as well as a html widget with a map of all locations and travl paths. 
 
 ```src``` cotains three scripts: 
 
@@ -87,44 +86,10 @@ In this README, the data and aquisition information is given, as well as a detai
 |shape_pt_lat|shapes.txt|The latitude of a point on a shape, following the sequence creates the travel path, crs: WGS84|
 |shape_pt_lon|shapes.txt|The longitude of a point on a shape, following the sequence creates the travel path, crs: WGS84|
 
-The type of service of individual trips (service_id) describes how the trips is serviced. This information is stored in calendar.txt and and calendar_dates.txt. calendar.txt has a row for each service_id, columns for each day of the week and a start_date and end_date (22/04/2024 to 17/07/2024 for the current dataset). A preview of the file is shown here: 
-
-|"service_id"|"monday"|"tuesday"|"wednesday"|"thursday"|"friday"|"saturday"|"sunday"|"start_date"|"end_date"|
-|------------|--------|---------|-----------|----------|--------|----------|--------|------------|----------|
-|1|1|1|1|1|1|0|0|20240422|20240717|
-|2|0|0|0|0|1|1|0|20240422|20240717|
-|3|1|1|1|1|1|1|1|20240422|20240717|
-|4|0|0|0|0|0|1|1|20240422|20240717|
-|5|0|0|0|0|0|0|0|20240422|20240717|
-
-A 1 indicates that a trip with the given service_id is available for all of the given week days in the date range. A 0 indicates that the trip is not available for all of the given week days in the date range. To identify the type of exception the 0 indicates, the calendar_dates.txt file is used. A preview is shown here: 
-
-|"service_id"|"date"|"exception_type"|
-|------------|------|----------------|
-|1|20240520|2|
-|1|20240610|2|
-|1|20240611|2|
-|1|20240612|2|
-|1|20240509|2|
-|1|20240613|2|
-|1|20240614|2|
-|2|20240614|2|
-|2|20240615|2|
-|3|20240610|2|
-
-The combination of the service_id, date and exception_type shows which service_id it applies to, on what date the exception occurs, and the type of exception: 1 if the service has been added to this date and 2 if the service have been removed from this date. 
 
 ## Reproducing of Analysis 
 
-As mentioned, the markdown containing the pre-processing of the institution locations called for many manual and case specific tweaks. This process is described in detail in 'Pre-Processing Institution Locations', and the final format of the data is described so it can be replicated on other data. 
-
-### Dependencies and Prerequisites 
-
-
-tidyverse 
-sf 
-hms 
-difftime
+As mentioned, the markdown containing the pre-processing of the institution locations called for many manual and case specific tweaks. This process is described in detail in 'Pre-Processing Institution Locations', and the final format of the data is described so it can be replicated on other data. Additionally, for the dependencies, packages and other metadata, see the ```Appendix.pdf```. 
 
 ### Pre-Processing Institution Locations 
 
@@ -171,8 +136,7 @@ In ```preprocess_inst_edu.rmd``` the instituion and study programme data is prep
 
     - The Social Worker in Guldborgsund and the Automation Engineering in Hedensted, has been closed, why these were removed. 
 
-- Finally, the new and existing study programmes were merged into one data frame, where a STATUS variable indicates whether a programme is 'new' or 'old' (some of the new programmes were already added to the UddannelsesZoom dataset, creating duplicates, these duplicates were removed keeping the ones with STATUS = 'new'). Grouping 'codes' were also assigned to each programme, these can be found in ```in/new_ed/README.md```. The final data frame is saved to ```in/preprocessed/education/EDU.shp```. Following is an example of the format, note that it should be an sf object. 
-
+- Finally, the new and existing study programmes were merged into one data frame, where a STATUS variable indicates whether a programme is 'new' or 'old' (some of the new programmes were already added to the UddannelsesZoom dataset, creating duplicates, these duplicates were removed keeping the ones with STATUS = 'new'). Grouping 'codes' were also assigned to each programme, these can be found in ```in/new_ed/README.md```. The final data frame is saved to ```in/preprocessed/education/EDU.shp```.
 |
 
 ### Pre-Processing RejseplanenLABS Data 
@@ -193,27 +157,10 @@ In ```preprocess_rejseplanen.rmd``` the GTFS data from RejseplanenLABS is pre-pr
 
     - ```shapes.txt```: "shape_id", "shape_pt_lon", "shape_pt_lat" and "shape_pt_sequence" were used. The geodetic coordinates are in CRS WGS84, and used in converting the dataframe to an sf object with ESPG: 4326, and then transformed to planarcoordinates with ESPG: 25832. The the POINT geometries are cast to LINESTRING geometries, in the order defined by "shape_pt_sequence". Resulting in an sf object, ```shapes``` with one row per unique "shape_id" and "geometry", which is saved to ```in/preprocessed/GTFS_prep/shapes.shp``` 
 
-    - ```calendar.txt```: "service_id", "start_date", "end_date" as well as "monday" to "sunday" are used. The "service_id"s not present in ```routes_stops``` are removed. 
-
-    - ```calendar_dates.txt```: "service_id", "date" and "exception_type" are used. The The "service_id"s not present in ```routes_stops``` are removed. Then the values in the "date" column are defined as date objects (as.Date) and the "service_id" is converted to character. 
-
-- When the raw data has been pre-processed, further pre-processing is conducted to retrieve; information on when different trips are in service (to be able to identify differences between weekdays and weekends), information on mean waitining time for the individual stops (to get a more accurate look at the distance reached within a time limit) and finally information on the distances possible to travel from the different stops that lie within the 500 meter buffers from all the included study programmes. 
-
-    - The data used for this analysis includes information on trips and service in the date range 22/04/2024 to 17/07/2024 (the first day being a monday). To identify wheter or not each trip is in service on any given day in this range, a matrix is made, ```calendar_matrix```, with one column per "date" in the range and one row per included "service_id". The matrix is populated by 1s and 0s, conditioned on whether a given service_id indicates service on a specific date using ```calendar```. Then the ```calendar_dates``` data frame is used to include the exceptions. For each row in ```calendar_date``` the matrix cells with the corresponding "date" and "service_id" is either filled with a 0, (if the "exception_type" = 2) or a 1 (if "exception_type" = 2). The final matrix is saved as an RData file (at ```in/preprocessed/GTFS_prep/calendar_matrix.RData```), as it is large and takes a while to run. 
-
-    - To approach a nuanced view of the differences from the different study programmes, the waiting times are included when calculating distance traveled within the given time limits. "wait" is calculated and by extracting all rows from the ```stop_times``` data frame, where "stop_id" represents a stop that lies within a buffer around a study program. Then the data fram is arranged by "stop_id", "service_id" and the "departure_time", and grouped by "stop_id" and "service_id", finally the "wait" value is calculated by subtracting "departure_time" from the previous "departure_time". To be able to handle each 24 hours as a 'loop' the first departure of the day has to be related back to the previous (in other words; the latest departure). This is done by extracting the first and last row from all groups, then arranging "departure_time" in descending order, and calculating the "wait", then the first rows from each group are merged with the initial data frame (replacing the duplicate rows). Finally the dataframe is saved to ```in/preprocessed/stop_wait.csv```
-
-
-    - 
-
-
+- After pre-processing the raw data, the time (in seconds) and distances were extracted. For each programme, the stops within 500 meters were extracted, for each of these routes going thorugh it was extracted, for each stop the time in seconds was added together, and when it reached the given time limit, the next route the stop was part of was analysed. The distances were extracted by casting the LINESTRING shape data to POINT data, identifying the nearest point to the starting stop, and to the end stop, and extracting the POINT data between these two stops. Then the data was cased back to LINESTRING, and measured using ```st_length()```. 
 
 
 ### Analysis 
 
-format: 
+The complete analysis is availble in the markdown ```analysis1.rmd``` in the ```src``` folder. 
 
-
-|CODE|STATUS|LIMIT|WEEK|DIST|
-|----|------|-----|----|--------|
-|Description of group (e.g. the programme)|The binary predictor (e.g. new or old)|Time limits(e.g. 5, 20, 45 minutes)|The type of day the service occurs (e.g. weekday or weekend)|The outcome; the maximum distance possibly travelled|

@@ -1,0 +1,190 @@
+---
+title: "Public Transportation Acces and Reach - Analysis"
+output: html_document
+date: "2024-06-09"
+---
+
+The analysis of the differences in public transportation access and reach is conducted in this markdown. For more than the comments given, a complete walk through and decsription can be found in the README.md file in the repository. 
+
+# Set up: Package Installation and Data Load 
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+pacman::p_load("tidyverse", "sf", "mapview", "ggplot2", "geodata", "emmeans", "webshot2")
+```
+
+```{r}
+#the sf object with distances travelled within each time-limit
+dist_sf <- st_read("../in/preprocessed/GTFS_prep/distancesALL.shp")
+#the stops_sf object 
+stops_sf <- st_read("../in/preprocessed/GTFS_prep/stops.shp")
+EDU <- st_read("../in/preprocessed/education/EDU.shp") #load in EDU data
+```
+
+Polygons of all municipalities are loaded in from GADM. It is converted to an sf object and transformed to crs = 25832. Only the region name (REG_NAME) and municipality name (MUN_NAME) (and the geometry column) are kept in the sf object
+```{r}
+##retreieve municipality boundaries 
+mun <- gadm(country = "DNK", level = 2, path = "../in/preprocessed/")
+mun_sf <- mun %>% 
+  st_as_sf() %>% 
+  st_transform(crs= 25832) %>% 
+  dplyr::select("NAME_1", "NAME_2") 
+```
+
+# Data Inspection and Summary statiscs 
+Add the status column to dist_sf and make predictor variables ordered factors
+```{r}
+dist_sf$STATUS <- EDU$STATUS[dist_sf$EDU_i] #add status col to sist 
+dist_sf <- dist_sf[c(2,12,10,3,6,4,5,1,7:9)]
+
+dist_sf$STATUS <- ordered(dist_sf$STATUS)
+dist_sf$limit <- ordered(dist_sf$limit , 
+                         levels = c("5 minute", "20 minute", "45 minute"))
+```
+
+
+## Visual Inspection and data Transformation
+The visual inspection reveals a skew in the distance data, driven by the many routes not reaching a stop within the maximum 45 minutes. To be able to log transform the data, these rows with dist = 0 are subsetted. 
+```{r}
+##log transforming the distance data as it is very skewed
+png("../out/total_distances.png")
+hist(dist_sf$distanc,
+     main = "Distances Travelled Total", 
+     xlab = "Distance (meters)")
+dev.off()
+
+dist_sf0 <- dist_sf[dist_sf$distanc ==0,] #subset dist = 0 values 
+dist_sf <- dist_sf[!dist_sf$distanc ==0,] #subset dist = 0 values 
+
+dist_sf$distanc_log <- log(dist_sf$distanc) #log transdform 
+
+png("../out/log_distances.png")
+hist(dist_sf$distanc_log, 
+     main = "Log Transformed distances Travelled", 
+     xlab = "Log-Transformed Distance")
+dev.off()
+```
+
+## Summary Statistics for Distances > 0 meters 
+The summary statiscs are calculated based on the distance in meters, and saved to the out folder 
+```{r}
+columns <- c("status", "limit", "mean", "sd", "n")
+dist_summary = data.frame(matrix(nrow = 8, ncol = length(columns))) 
+colnames(dist_summary) <- columns
+dist_summary$status <- c("Old", "Old", "Old", "Old", "New", "New", "New", "New")
+dist_summary$limit <- c("total", "5 minute", "20 minute", "45 minute", 
+                        "total", "5 minute", "20 minute", "45 minute")
+dist_summary$mean <- c(mean(dist_sf$distanc[dist_sf$STATUS == "Old"]), 
+                       mean(dist_sf$distanc[dist_sf$STATUS == "Old" & dist_sf$limit == "5 minute"]), 
+                       mean(dist_sf$distanc[dist_sf$STATUS == "Old" & dist_sf$limit == "20 minute"]), 
+                       mean(dist_sf$distanc[dist_sf$STATUS == "Old" & dist_sf$limit == "45 minute"]), 
+                       mean(dist_sf$distanc[dist_sf$STATUS == "New"]), 
+                       mean(dist_sf$distanc[dist_sf$STATUS == "New" & dist_sf$limit == "5 minute"]), 
+                       mean(dist_sf$distanc[dist_sf$STATUS == "New" & dist_sf$limit == "20 minute"]), 
+                       mean(dist_sf$distanc[dist_sf$STATUS == "New" & dist_sf$limit == "45 minute"]))
+dist_summary$sd <- c(sd(dist_sf$distanc[dist_sf$STATUS == "Old"]), 
+                     sd(dist_sf$distanc[dist_sf$STATUS == "Old" & dist_sf$limit == "5 minute"]), 
+                     sd(dist_sf$distanc[dist_sf$STATUS == "Old" & dist_sf$limit == "20 minute"]),
+                     sd(dist_sf$distanc[dist_sf$STATUS == "Old" & dist_sf$limit == "45 minute"]),
+                     sd(dist_sf$distanc[dist_sf$STATUS == "New"]), 
+                     sd(dist_sf$distanc[dist_sf$STATUS == "New" & dist_sf$limit == "5 minute"]), 
+                     sd(dist_sf$distanc[dist_sf$STATUS == "New" & dist_sf$limit == "20 minute"]),
+                     sd(dist_sf$distanc[dist_sf$STATUS == "New" & dist_sf$limit == "45 minute"]))
+dist_summary$n <- c(length(dist_sf$distanc[dist_sf$STATUS == "Old"]), 
+                     length(dist_sf$distanc[dist_sf$STATUS == "Old" & dist_sf$limit == "5 minute"]), 
+                     length(dist_sf$distanc[dist_sf$STATUS == "Old" & dist_sf$limit == "20 minute"]),
+                     length(dist_sf$distanc[dist_sf$STATUS == "Old" & dist_sf$limit == "45 minute"]),
+                     length(dist_sf$distanc[dist_sf$STATUS == "New"]), 
+                     length(dist_sf$distanc[dist_sf$STATUS == "New" & dist_sf$limit == "5 minute"]), 
+                     length(dist_sf$distanc[dist_sf$STATUS == "New" & dist_sf$limit == "20 minute"]),
+                     length(dist_sf$distanc[dist_sf$STATUS == "New" & dist_sf$limit == "45 minute"]))
+
+dist_summary[nrow(dist_summary)+1,] <- c("total", "total", 
+                                         mean(dist_sf$distanc),
+                                         sd(dist_sf$distanc), 
+                                         length(dist_sf$distanc))
+##mean, sd and n numeric
+dist_summary$mean <- as.numeric(dist_summary$mean)
+dist_summary$sd <- as.numeric(dist_summary$sd)
+dist_summary$n <- as.numeric(dist_summary$n)
+
+##save to csv. 
+write.csv(dist_summary, file = "../out/summary_stats.csv")
+```
+
+## Summarise Distances < 0 meters.
+```{r}
+#short summary of distance = 0
+
+dist0_summary <- dist_sf0 %>% 
+  as.data.frame() %>% #to be able to view summary stats wihtout the geometry column
+  select(limit, STATUS) %>% 
+  summarise(n = n(), 
+            .by = c(STATUS, limit)) 
+
+#extract percentage of observations of the entire set that has dist = 0
+n0 <- dist0_summary$n
+totaln <-n0 + as.numeric(c(
+  dist_summary$n[dist_summary$status == "Old" & dist_summary$limit =="45 minute"],
+  dist_summary$n[dist_summary$status == "Old" & dist_summary$limit =="5 minute"], 
+  dist_summary$n[dist_summary$status == "Old" & dist_summary$limit =="20 minute"], 
+  dist_summary$n[dist_summary$status == "New" & dist_summary$limit =="45 minute"], 
+  dist_summary$n[dist_summary$status == "New" & dist_summary$limit =="20 minute"], 
+  dist_summary$n[dist_summary$status == "New" & dist_summary$limit =="5 minute"]))
+
+dist0_summary$perc <-  n0/totaln*100
+write.csv(dist0_summary, file = "../out/summary_dist0.csv")
+
+png("../out/map_dist0.png")
+plot(st_geometry(mun_sf), main = "Programmes and Stops, where distance = 0"); plot(stops_sf$geometry[stops_sf$stop_id %in% unique(dist_sf0$stop_id)], col = "red", pch = 19, add = T);plot(EDU$geometry[unique(dist_sf0$EDU_i)], col = sf.colors(2), pch = 4, add= T)
+dev.off()
+
+```
+## Box-and density plots
+```{r}
+ggplot(dist_sf, aes(x=distanc_log, group = STATUS, fill = STATUS))+
+  geom_boxplot(alpha = 0.5)+
+  facet_wrap(~limit, nrow = 3)
+
+ggplot(dist_sf, 
+       aes(x=distanc_log, group = STATUS, col = STATUS, fill = STATUS))+
+  geom_density(alpha = 0.9)+
+  facet_wrap(~limit, nrow = 3)
+```
+
+# Linear Regression on Distance
+```{r}
+png("../out/perc_dist0.png")
+ggplot(dist0_summary)+
+  geom_col(aes(x = limit, y = perc, color = STATUS, fill = STATUS), 
+           position = position_dodge(0.8), width = 0.7, alpha = 0.7) 
+dev.off()
+
+m1 <- (lm(distanc_log ~ STATUS + limit, data = dist_sf))
+summary(m1)
+png("../out/logdist_programmes.png")
+emmip(m1, STATUS ~ limit, CIs = TRUE, ylab= "log distance", xlab = "") 
+dev.off()
+```
+
+
+
+```{r}
+#extract stops 
+stops_starting <- stops_sf[stops_sf$intersect == 1,]
+stops_destination <- stops_sf[stops_sf$stop_id %in% unique(dist_sf$to_stop),]
+rm(dist_sf0,stops_sf)
+
+#clean up in the amount of information in the dataframes 
+dist_sf <- dist_sf[1:7]
+
+map <- mapview(list(EDU, dist_sf, stops_starting, stops_destination), 
+        layer.name= c("Programmes", "Travel Paths", "Stops (start)", "Stops (dest)"), 
+        burst = T, 
+        zcol = list("STATUS", "limit", NULL, NULL))
+##save map 
+mapshot(map, url = "../out/PTARmap.html", selfcontained = F)
+```
+

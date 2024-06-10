@@ -76,7 +76,7 @@ stop_times <- merge(stop_times, trips) #merge with trips
 stops_routes <- unique(stop_times[c(3:9)]) #unique rows with stop_id, stop_sequence, route_id, time, service_id, direction_id, shape_id
 write_csv(stops_routes, "../in/preprocessed/GTFS_prep/stops_routes.csv")
 write_csv(stop_times, "../in/preprocessed/GTFS_prep/stop_times.csv")
-rm(trips)#trips is no longer relevant 
+rm(trips, i, timestamp)#trips is no longer relevant 
 ```
 
 
@@ -128,326 +128,103 @@ calendar_dates <- calendar_dates %>%
 
 
 # Reformat the GTFS Data
-Using the pre-processed GTFS data, information on service dates, waiting time and distances are retireved. 
-## calendar_matrix
+
+## Distance 
+
+
 ```{r}
-#define the column names, i.e. the date range based on calendar start and end date. 
-date_span <- seq(as.Date(as.character(unique(calendar$start_date)), "%Y%m%d"), 
-                 as.Date(as.character(unique(calendar$end_date)), "%Y%m%d"), by = "day")
-#create empty matrix service_id as rownames and dates as columnames
-calendar_matrix <- matrix(nrow = length(unique(calendar$service_id)), 
-                     ncol = length(date_span), 
-                     dimnames = list(calendar$service_id, as.character(date_span)))
-#fill the matrix based on calendar
-for (i in 1:nrow(calendar)){
-  for (j in seq(1:7)){
-    seq <- c(seq(from = j, to = ncol(calendar_matrix),  by = 7))
-                 #,length.out = ncol(calendar_matrix)%/%7))
-    if (calendar[i, j+1] == 1){
-      calendar_matrix[i, seq] <- 1
-    }
-    else if (calendar[i, j+1] == 0){
-      calendar_matrix[i, seq] <- 0
-    }
-  }
-}
-##fill the matrix based on calendar_date
-for (i in 1:nrow(calendar_dates)){
-  if (calendar_dates$exception_type[i] == 1){
-    calendar_matrix[(calendar_dates$service_id[i]), 
-                    as.character(calendar_dates$date[i])] <- 1
-  }
-  else if (calendar_dates$exception_type[i] == 2){
-    calendar_matrix[(calendar_dates$service_id[i]), 
-                    as.character(calendar_dates$date[i])] <- 0
-  }
-}
-save(calendar_matrix, file = "../in/preprocessed/GTFS_prep/calendar_matrix.RData")
-rm(calendar, calendar_dates)
-```
-
-
-## wait_time
-The waiting times for the stops within the buffers are extracted, to add an average to the time limits when measuring distance. 
-```{r}
-stop_waits <- stop_times %>% 
-  filter(stop_id %in%c(stops_sf$stop_id[stops_sf$intersect == 1])) %>% #keep only stops that intersect with the buffers
-  select("trip_id", "departure_time", "stop_id", "route_id", "service_id", "shape_id") %>% 
-  arrange(stop_id, service_id, departure_time) %>% #arrange so departure times are collected by stops and service_id
-  group_by(stop_id, service_id) %>% #group by stop and service id 
-  mutate(wait = departure_time-lag(departure_time))#create wait column with wait time
-#to be able to handle each 24 hours as a 'loop' the last stop of the day has to be related back to the first stop of the 'next' day (meaning the same day). 
-midnight <- stop_waits %>% 
-  slice(c(1,n())) %>% #extract first and last stop times
-  arrange(stop_id, service_id, desc(departure_time)) %>%  #arrange departure in decending order, as the wait is calculated by subtracting the previous time. 
-  mutate(wait = (departure_time-lag(departure_time)+86400)) %>% #calculate wait, and add 86400 (n seconds in 24 hours) to retrieve the actual wait in seconds
-  filter(row_number() %% 2 == 0) %>% #extract only every other row, the first stop of each stopxservice combination. 
-  ungroup()
-stop_waits <- stop_waits %>% 
-  slice(-c(1)) %>% #remove the first row of every group
-  ungroup()
-stop_waits <- rbind(stop_waits, midnight) #combine the first rows back to the df 
-write_csv(stop_waits, "../in/preprocessed/GTFS_prep/stop_waits.csv")
-rm(midnight)
-```
-
-
-
-
-### Aggregate stop_waits
-```{r}
-stops_sf <- st_read("../in/preprocessed/GTFS_prep/stops.shp")
-stop_times <- read_csv("../in/preprocessed/GTFS_prep/stop_times.csv")
-stop_waits <- read_csv("../in/preprocessed/GTFS_prep/stop_waits.csv")
-shapes_sf <- st_read("../in/preprocessed/GTFS_prep/shapes.shp")
 stops_routes <- read_csv("../in/preprocessed/GTFS_prep/stops_routes.csv")
-
-load("../in/preprocessed/GTFS_prep/calendar_matrix.RData")
-```
-
-##collapsing service ids 
-```{r}
-agg_waits <- stop_waits %>% 
-  dplyr::summarise(mean_wait = mean(wait), 
-                   sd_wait = sd(wait), 
-                   n_group = n(),
-                   .by = c(stop_id, service_id))
-
-agg_waits$weekday <- 0
-agg_waits$weekend <- 0
-
-
-for ()
-
-
-table((is.na(calendar_matrix)))
-
-
-rowSums(calendar_matrix)
-
-weekdays(as.POSIXlt(colnames(calendar_matrix)))
-
-
+stops_sf <- st_read("../in/preprocessed/GTFS_prep/stops.shp")
+shapes_sf <- st_read("../in/preprocessed/GTFS_prep/shapes.shp")
+EDU <- st_read("../in/preprocessed/education/EDU.shp") #load in EDU data
+EDU_BUF <- EDU #duplicate 
+EDU_BUF["geometry"] <- st_buffer(EDU[c("geometry")], 500) #add 500 meter buffer to it
 ```
 
 
-
-
 ```{r}
+columns <- c("EDU_i", "limit", "stop_id", "to_stop", "time", 
+             "route_id", "serivce_id", "direction_id", "shape_id")
+dist_df = data.frame(matrix(nrow = 0, ncol = length(columns))) 
+colnames(dist_df) <- columns
 
+timelimits <- c((5*60), (20*60), (45*60))
 
-stop_waits[stop_waits$wait ==86400,]
-stop_times[stop_times$trip_id == 127803281,]
-
-
-
-stop_waits[stop_waits$trip_id == 127803281,]
-
-
-
-mapview(shapes_sf[shapes_sf$shape_id == 5484,]) + mapview(stops_sf[stops_sf$stop_id %in%stop_waits$stop_id[stop_waits$trip_id == 127803281],])
-```
-
-```{r}
-library(mapview)
-
-
-mapview(stops_sf[stops_sf$intersect == 1,])+mapview()
-
-```
-
-
-
-
-
-## time_limit
-```{r}
-
-```
-
-
-
-# Functions 
-## time_function(): 
-
-```{r}
-time_function <- function(edu_indx, stop_idx, stops_routes, time_df, thresh){
-  
-  for (i in (1:nrow(stops_routes))){
-    if (stops_routes$stop_id[i] == stop_idx){
-      time_df[nrow(time_df)+1,] <- list(edu_indx, 
-                                        stop_idx, 
-                                        NA, 
-                                        0.0,
-                                        sprintf("%s minute", (thresh/60)),
-                                        0.0, 
-                                        stops_routes[i,"route_id"], 
-                                        stops_routes[i,"service_id"],
-                                        stops_routes[i,"direction_id"],
-                                        stops_routes[i,"shape_id"])
-      for (j in ((i+1):nrow(stops_routes))){
-        if (stops_routes$stop_sequence[j]>0){
-          time_df[nrow(time_df),"to_stop"] <- stops_routes$stop_id[j]
-          time_df[nrow(time_df),"time"] <- sum(time_df[nrow(time_df),"time"], stops_routes$time[j])
-        }
-        
-        else if (stops_routes$stop_sequence[j]==0){
-          break
-        }
-        
-        if (time_df[nrow(time_df),"time"]>=min){
-          break
+for (i in 1:nrow(EDU_BUF)){
+  stops_intersect <- stops_sf[unlist(st_intersects(EDU_BUF[i,], stops_sf)),]$stop_id
+  for (limit in timelimits){
+    for (stop in stops_intersect){
+      for (j in 1:nrow(stops_routes)){
+        if (stops_routes$stop_id[j] == stop){
+          dist_df[nrow(dist_df)+1,] <- c(i, 
+                                            sprintf("%s minute", (limit/60)),
+                                            stop, 
+                                            NA, 
+                                            0.0,
+                                            (unname(as.vector(stops_routes[j, 4:7]))))
+          for (k in ((j+1):nrow(stops_routes))){
+            if (stops_routes$stop_sequence[k]>0){
+              dist_df[nrow(dist_df), "to_stop"] <- stops_routes$stop_id[k]
+              dist_df[nrow(dist_df), "time"] <- sum(dist_df[nrow(dist_df), "time"],
+                                                    stops_routes$time[k])}
+            else if (stops_routes$stop_sequence[k]==0){
+              break }
+            if (dist_df[nrow(dist_df),"time"]>= limit){
+              break }
+          }
         }
       }
     }
   }
-  return(time_df)
 }
-```
 
+dist_df <- dist_df %>% 
+  filter(limit == "5 minute" & time <= 300 |
+         limit == "20 minute" & time <= 1200 |
+         limit == "45 minute" & time <= 2700)  ##filter out duplicates
+## for all rows not able to reach another stop within the alloted time limits, the to_stop is set to stop_id (so when measuring distance = 0) 
+dist_df$to_stop[is.na(dist_df$to_stop)] <- dist_df$stop_id[is.na(dist_df$to_stop)]
 
-#### time_all_fun():
-- arguments: 
-  - dataframe with one row per location (polygon) 
-  - stop sf
-  - list of time threholds in seconds
-  - stop secs 
-- creates the time_df dataframe
-- extracts the intersection-stops (locations within polygons from stop_sf)
-
-```{r}
-time_all_fun <- function(EDU_BUF, stops_sf, thresholds, stop_secs){
-  
-  columns <- c("edu_indx", "from_stop", "to_stop", "time","min", "distance", 
-               "route_id", "serivce_id", "direction_id", "shape_id")
-  time_df = data.frame(matrix(nrow = 0, ncol = length(columns))) 
-  colnames(time_df) <- columns
-  stops_inter <- st_intersects(EDU_BUF, stops_sf)
-  
-  for (edu_indx in 1:nrow(EDU_BUF[1,])){
-    stops = stops_sf[stops_inter[[edu_indx]],]$stop_id
-    for (thresh in thresholds){
-      for (i in 1:length(stops)){
-        time_df = time_function(edu_indx, stops[i], stop_secs, time_df, thresh)
-      }
-    }
-  }
-  time_df <- time_df %>% 
-  filter(
-    min == "5 minute" & time <= 300 |
-    min == "20 minute" & time <= 1200 |
-    min == "45 minute" & time <= 2700) %>% 
-  filter(!is.na(to_stop))
-  return(time_df)
-}
-```
-
-
-### Test functions 
-```{r}
-thresholds <- c((5*60), (20*60), (45*60))
-time_df <- time_all_fun(EDU_BUF, stops_sf, thresholds, stop_secs)
-```
-
-
-```{r}
-st_write(time_df, "../data/data_post/time_df.shp", append = F)
-```
-
-
-
-### Extracting Travel Time 
-The possible travel times within the three thresholds; 5, 20 and 45 minutes are extracted for all stops within the 500 meter buffer of each institution. 
-- First all stops within the 500 meter buffer are extracted 
-- The the time_df edited for every instituion and stop. 
-- The time_df is megeed with shapes_edu (all shapes used in the inst data)
-
-
-
-#### Cut shapes to fit between designated points 
-```{r}
-shapes_edu <- shapes_sf[shapes_sf$shape_id %in% time_df$shape_id ,]
-```
-
-#### Clean up
-- When checking whether the summed time is over or equal to the threshold some inaccurate data is being passed on, this is cleaned up; making sure that nothing is above the three threholds
-- Additionally, some stops within the 500 m buffer is the end-station, they will have NA in their 'to_stop' column, and are deleted. 
-- lastly the relevant time geometries are included
-```{r}
-time_df <- time_df %>% 
-  filter(
-    min == "5 minute" & time <= 300 |
-    min == "20 minute" & time <= 1200 |
-    min == "45 minute" & time <= 2700) %>% 
-  filter(!is.na(to_stop))
-time_df <- merge(shapes_edu, time_df, all.y = T)
+write_csv(dist_df, "../in/preprocessed/GTFS_prep/distancesALL.csv")
 ```
 
 
 
 
-### Extracting Distance between all from_stops and to_stops
-
-consider handeling a shape at a time instead of a row; to limit overhead
+## distances continued
 ```{r}
-##overall function extracts stop and shape geometries passed directly? 
+dist_df$distance <- 0.0
+shapes_edu <- shapes_sf[shapes_sf$shape_id %in% dist_df$shape_id ,]
+dist_sf <- merge(shapes_edu, dist_df, all.y = T)
 
-gen_dist_fun <- function(shapes_edu, stops_sf, time_df){
-  
-  #for row in time df here 
-  for (i in 1:nrow(time_df)){
-    from_stopG <- stops_sf$geometry[stops_sf$stop_id == time_df$from_stop[i],]
-    to_stopG <- stops_sf$geometry[stops_sf$stop_id == time_df$to_stop[i],]
-    shapeG <- shapes_edu$geometry[shapes_edu$shape_id == time_df$shape_id[i],]
-    time_df$distance[i] <- dist_function(from_stopG, to_stopG, shapeG)
-  }
-}
-```
-
-
-
-
-## EDU 
-The EDU data frame has been preprocessed in preprocess_inst_edu.rmd and contains all new educations and their old counterparts as well as their locations in POINT geometry. A new sf object is made, with polygons instead, representing a 500 meter buffer around each location.
-```{r}
-EDU <- st_read("../in/preprocessed/EDU.shp")
-EDU_BUF <- EDU
-EDU_BUF["geometry"] <- st_buffer(EDU[c("geometry")], 500)
-```
-
-
-
-```{r}
 dist_function <- function(from_stopG, to_stopG, shapeG){
   shape_points <- st_cast(shapeG, "POINT")
+  
   shape_sect <- shape_points[st_nearest_feature(to_stopG, 
                                                 shape_points):st_nearest_feature(from_stopG, 
                                                                                  shape_points), ]
-  
   sectionLINE <- shape_sect %>% 
     group_by(shape_id) %>%
     dplyr::summarise(do_union = FALSE) %>%
     st_cast("LINESTRING")
-  
   return(sectionLINE$geometry)
 }
-```
 
-```{r}
-##test dist fun 
-for (i in 1:nrow(time_df)){
-  from_stopG <- stops_sf$geometry[stops_sf$stop_id == time_df$from_stop[i],]
-  to_stopG <- stops_sf$geometry[stops_sf$stop_id == time_df$to_stop[i],]
-  shapeG <- time_df[i,c("shape_id", "geometry")]
 
-  time_df$geometry[i] <- dist_function(from_stopG, to_stopG, shapeG)
-  time_df$distance[i] <- st_length(time_df$geometry[i])
+for (i in 1:nrow(dist_sf)){
+  from_stopG <- stops_sf$geometry[stops_sf$stop_id == dist_sf$stop_id[i],]
+  to_stopG <- stops_sf$geometry[stops_sf$stop_id == dist_sf$to_stop[i],]
+  shapeG <- dist_sf[i,c("shape_id", "geometry")]
+  
+  dist_sf$geometry[i] <- dist_function(from_stopG, to_stopG, shapeG)
+  dist_sf$distance[i] <- st_length(dist_sf$geometry[i])
 }
+st_write(dist_sf, "../in/preprocessed/GTFS_prep/distancesALL.shp", append = F)
 ```
 
 
-```{r}
-mapview(time_df, zcol = "min", burst = T)
-```
+
+
+
 
 
